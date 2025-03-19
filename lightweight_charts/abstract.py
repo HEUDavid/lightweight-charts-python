@@ -888,6 +888,7 @@ class AbstractChart(Candlestick, Pane):
         price_label: bool = True,
         scale_margin_top: float = 0.0,
         scale_margin_bottom: float = 0.0,
+        price_scale_id: Optional[str] = None,
         pane_index: int = 0,
     ) -> Histogram:
         """
@@ -901,6 +902,7 @@ class AbstractChart(Candlestick, Pane):
             price_label,
             scale_margin_top,
             scale_margin_bottom,
+            price_scale_id,
             pane_index,
         )
 
