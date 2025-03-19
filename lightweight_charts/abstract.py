@@ -508,7 +508,7 @@ class Line(SeriesCommon):
                     lastValueVisible: {jbool(price_label)},
                     priceLineVisible: {jbool(price_line)},
                     crosshairMarkerVisible: {jbool(crosshair_marker)},
-                    priceScaleId: {f'"{price_scale_id}"' if price_scale_id else 'undefined'},
+                    priceScaleId: {f'{price_scale_id}' if price_scale_id else 'undefined'},
                     {"""autoscaleInfoProvider: () => ({
                             priceRange: {
                                 minValue: 1_000_000_000,
@@ -569,6 +569,7 @@ class Histogram(SeriesCommon):
         price_label,
         scale_margin_top,
         scale_margin_bottom,
+        price_scale_id=None,
         pane_index: int = None,
     ):
         super().__init__(chart, name, pane_index)
@@ -581,7 +582,7 @@ class Histogram(SeriesCommon):
                 color: '{color}',
                 lastValueVisible: {jbool(price_label)},
                 priceLineVisible: {jbool(price_line)},
-                priceScaleId: '{self.id}',
+                priceScaleId: {f'{price_scale_id}' if price_scale_id else f'{self.id}'},
                 priceFormat: {{type: "volume"}},
             }},
             {f'{pane_index}' if pane_index is not None else '0'}
