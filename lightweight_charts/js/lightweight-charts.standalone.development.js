@@ -1,6 +1,6 @@
 /*!
  * @license
- * TradingView Lightweight Charts™ v5.0.3
+ * TradingView Lightweight Charts™ v5.0.5
  * Copyright (c) 2025 TradingView, Inc.
  * Licensed under Apache License 2.0 https://www.apache.org/licenses/LICENSE-2.0
  */
@@ -1238,6 +1238,10 @@
          * This mode disables rendering of the crosshair.
          */
         CrosshairMode[CrosshairMode["Hidden"] = 2] = "Hidden";
+        /**
+         * This mode sticks crosshair's horizontal line to the price value of a single-value series or to the open/high/low/close price of OHLC-based series.
+         */
+        CrosshairMode[CrosshairMode["MagnetOHLC"] = 3] = "MagnetOHLC";
     })(CrosshairMode || (CrosshairMode = {}));
     class Crosshair extends DataSource {
         constructor(model, options) {
@@ -1245,7 +1249,7 @@
             this._private__pane = null;
             this._private__price = NaN;
             this._private__index = 0;
-            this._private__visible = true;
+            this._private__visible = false; // initially the crosshair should not be visible, until the user interacts.
             this._private__priceAxisViews = new Map();
             this._private__subscribed = false;
             this._private__crosshairPaneViewCache = new WeakMap();
@@ -3393,6 +3397,15 @@
         }
     }
 
+    const magnetPlotRowKeys = [
+        3 /* PlotRowValueIndex.Close */,
+    ];
+    const magnetOHLCPlotRowKeys = [
+        0 /* PlotRowValueIndex.Open */,
+        1 /* PlotRowValueIndex.High */,
+        2 /* PlotRowValueIndex.Low */,
+        3 /* PlotRowValueIndex.Close */,
+    ];
     class Magnet {
         constructor(options) {
             this._private__options = options;
@@ -3425,7 +3438,10 @@
                 }
                 // convert bar to pixels
                 const firstPrice = ensure(series._internal_firstValue());
-                return acc.concat([ps._internal_priceToCoordinate(bar._internal_value[3 /* PlotRowValueIndex.Close */], firstPrice._internal_value)]);
+                const plotRowKeys = this._private__options.mode === 3 /* CrosshairMode.MagnetOHLC */
+                    ? magnetOHLCPlotRowKeys
+                    : magnetPlotRowKeys;
+                return acc.concat(plotRowKeys.map((key) => ps._internal_priceToCoordinate(bar._internal_value[key], firstPrice._internal_value)));
             }, []);
             if (candidates.length === 0) {
                 return res;
@@ -14441,57 +14457,78 @@
         }
     }
 
-    // eslint-disable-next-line max-params
-    function fillSizeAndY(rendererItem, marker, seriesData, offsets, textHeight, shapeMargin, series, chart) {
-        const timeScale = chart.timeScale();
-        let inBarPrice;
-        let highPrice;
-        let lowPrice;
+    function isPriceMarker(position) {
+        return position === 'atPriceTop' || position === 'atPriceBottom' || position === 'atPriceMiddle';
+    }
+    function getPrice(seriesData, marker) {
+        if (isPriceMarker(marker.position) && marker.price !== undefined) {
+            return marker.price;
+        }
         if (isValueData(seriesData)) {
-            inBarPrice = seriesData.value;
-            highPrice = seriesData.value;
-            lowPrice = seriesData.value;
+            return seriesData.value;
         }
-        else if (isOhlcData(seriesData)) {
-            inBarPrice = seriesData.close;
-            highPrice = seriesData.high;
-            lowPrice = seriesData.low;
+        if (isOhlcData(seriesData)) {
+            if (marker.position === 'inBar') {
+                return seriesData.close;
+            }
+            if (marker.position === 'aboveBar') {
+                return seriesData.high;
+            }
+            if (marker.position === 'belowBar') {
+                return seriesData.low;
+            }
         }
-        else {
+        return;
+    }
+    // eslint-disable-next-line max-params, complexity
+    function fillSizeAndY(rendererItem, marker, seriesData, offsets, textHeight, shapeMargin, series, chart) {
+        const price = getPrice(seriesData, marker);
+        if (price === undefined) {
             return;
         }
+        const ignoreOffset = isPriceMarker(marker.position);
+        const timeScale = chart.timeScale();
         const sizeMultiplier = isNumber(marker.size) ? Math.max(marker.size, 0) : 1;
         const shapeSize = calculateShapeHeight(timeScale.options().barSpacing) * sizeMultiplier;
         const halfSize = shapeSize / 2;
         rendererItem._internal_size = shapeSize;
-        switch (marker.position) {
-            case 'inBar': {
-                rendererItem._internal_y = ensureNotNull(series.priceToCoordinate(inBarPrice));
+        const position = marker.position;
+        switch (position) {
+            case 'inBar':
+            case 'atPriceMiddle': {
+                rendererItem._internal_y = ensureNotNull(series.priceToCoordinate(price));
                 if (rendererItem._internal_text !== undefined) {
                     rendererItem._internal_text._internal_y = rendererItem._internal_y + halfSize + shapeMargin + textHeight * (0.5 + 0.1 /* Constants.TextMargin */);
                 }
                 return;
             }
-            case 'aboveBar': {
-                rendererItem._internal_y = (ensureNotNull(series.priceToCoordinate(highPrice)) - halfSize - offsets._internal_aboveBar);
+            case 'aboveBar':
+            case 'atPriceTop': {
+                const offset = ignoreOffset ? 0 : offsets._internal_aboveBar;
+                rendererItem._internal_y = (ensureNotNull(series.priceToCoordinate(price)) - halfSize - offset);
                 if (rendererItem._internal_text !== undefined) {
                     rendererItem._internal_text._internal_y = rendererItem._internal_y - halfSize - textHeight * (0.5 + 0.1 /* Constants.TextMargin */);
                     offsets._internal_aboveBar += textHeight * (1 + 2 * 0.1 /* Constants.TextMargin */);
                 }
-                offsets._internal_aboveBar += shapeSize + shapeMargin;
+                if (!ignoreOffset) {
+                    offsets._internal_aboveBar += shapeSize + shapeMargin;
+                }
                 return;
             }
-            case 'belowBar': {
-                rendererItem._internal_y = (ensureNotNull(series.priceToCoordinate(lowPrice)) + halfSize + offsets._internal_belowBar);
+            case 'belowBar':
+            case 'atPriceBottom': {
+                const offset = ignoreOffset ? 0 : offsets._internal_belowBar;
+                rendererItem._internal_y = (ensureNotNull(series.priceToCoordinate(price)) + halfSize + offset);
                 if (rendererItem._internal_text !== undefined) {
-                    rendererItem._internal_text._internal_y = rendererItem._internal_y + halfSize + shapeMargin + textHeight * (0.5 + 0.1 /* Constants.TextMargin */);
+                    rendererItem._internal_text._internal_y = (rendererItem._internal_y + halfSize + shapeMargin + textHeight * (0.5 + 0.1 /* Constants.TextMargin */));
                     offsets._internal_belowBar += textHeight * (1 + 2 * 0.1 /* Constants.TextMargin */);
                 }
-                offsets._internal_belowBar += shapeSize + shapeMargin;
+                if (!ignoreOffset) {
+                    offsets._internal_belowBar += shapeSize + shapeMargin;
+                }
                 return;
             }
         }
-        ensureNever(marker.position);
     }
     function isValueData(data) {
         // eslint-disable-next-line no-restricted-syntax
@@ -14593,7 +14630,7 @@
                         _internal_height: 0,
                     };
                 }
-                const dataAt = ensureNotNull(this._private__series.dataByIndex(marker.time, -1));
+                const dataAt = this._private__series.dataByIndex(marker.time, 0 /* MismatchDirection.None */);
                 if (dataAt === null) {
                     continue;
                 }
@@ -14615,6 +14652,7 @@
             this._private__autoScaleMargins = null;
             this._private__markersPositions = null;
             this._private__cachedBarSpacing = null;
+            this._private__recalculationRequired = true;
         }
         attached(param) {
             this._private__recalculateMarkers();
@@ -14623,6 +14661,7 @@
             this._private__paneView = new SeriesMarkersPaneView(this._private__series, ensureNotNull(this._private__chart));
             this._private__requestUpdate = param.requestUpdate;
             this._private__series.subscribeDataChanged((scope) => this._private__onDataChanged(scope));
+            this._private__recalculationRequired = true;
             this._internal_requestUpdate();
         }
         _internal_requestUpdate() {
@@ -14640,6 +14679,7 @@
             this._private__dataChangedHandler = null;
         }
         _internal_setMarkers(markers) {
+            this._private__recalculationRequired = true;
             this._private__markers = markers;
             this._private__recalculateMarkers();
             this._private__autoScaleMarginsInvalidated = true;
@@ -14705,28 +14745,31 @@
                     inBar: false,
                     aboveBar: false,
                     belowBar: false,
+                    atPriceTop: false,
+                    atPriceBottom: false,
+                    atPriceMiddle: false,
                 });
             }
             return this._private__markersPositions;
         }
         _private__recalculateMarkers() {
-            if (!this._private__chart || !this._private__series) {
+            if (!this._private__recalculationRequired || !this._private__chart || !this._private__series) {
                 return;
             }
             const timeScale = this._private__chart.timeScale();
-            if (timeScale.getVisibleLogicalRange() == null || !this._private__series || this._private__series?.data().length === 0) {
+            const seriesData = this._private__series?.data();
+            if (timeScale.getVisibleLogicalRange() == null || !this._private__series || seriesData.length === 0) {
                 this._private__indexedMarkers = [];
                 return;
             }
-            const seriesData = this._private__series?.data();
             const firstDataIndex = timeScale.timeToIndex(ensureNotNull(seriesData[0].time), true);
             this._private__indexedMarkers = this._private__markers.map((marker, index) => {
                 const timePointIndex = timeScale.timeToIndex(marker.time, true);
                 const searchMode = timePointIndex < firstDataIndex ? 1 /* MismatchDirection.NearestRight */ : -1 /* MismatchDirection.NearestLeft */;
                 const seriesDataByIndex = ensureNotNull(this._private__series).dataByIndex(timePointIndex, searchMode);
-                // @TODO think about should we expose the series' `.search()` method
                 const finalIndex = timeScale.timeToIndex(ensureNotNull(seriesDataByIndex).time, false);
-                return {
+                // You must explicitly define the types so that the minification build processes the field names correctly
+                const baseMarker = {
                     time: finalIndex,
                     position: marker.position,
                     shape: marker.shape,
@@ -14735,9 +14778,30 @@
                     _internal_internalId: index,
                     text: marker.text,
                     size: marker.size,
+                    price: marker.price,
                     _internal_originalTime: marker.time,
                 };
+                if (marker.position === 'atPriceTop' ||
+                    marker.position === 'atPriceBottom' ||
+                    marker.position === 'atPriceMiddle') {
+                    if (marker.price === undefined) {
+                        throw new Error(`Price is required for position ${marker.position}`);
+                    }
+                    return {
+                        ...baseMarker,
+                        position: marker.position, // TypeScript knows this is SeriesMarkerPricePosition
+                        price: marker.price,
+                    };
+                }
+                else {
+                    return {
+                        ...baseMarker,
+                        position: marker.position, // TypeScript knows this is SeriesMarkerBarPosition
+                        price: marker.price, // Optional for bar positions
+                    };
+                }
             });
+            this._private__recalculationRequired = false;
         }
         _private__updateAllViews(updateType) {
             if (this._private__paneView) {
@@ -14747,6 +14811,7 @@
             }
         }
         _private__onDataChanged(scope) {
+            this._private__recalculationRequired = true;
             this._internal_requestUpdate();
         }
     }
@@ -15139,7 +15204,7 @@
      * Returns the current version as a string. For example `'3.3.0'`.
      */
     function version() {
-        return "5.0.3";
+        return "5.0.5";
     }
 
     var LightweightChartsModule = /*#__PURE__*/Object.freeze({
